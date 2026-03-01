@@ -1,0 +1,152 @@
+import { randomUUID } from 'node:crypto';
+import type {
+  SessionId,
+  SessionKey,
+  CreateSessionParams,
+  SessionValidationResult,
+} from './types.js';
+import { SessionStore } from './store.js';
+
+export interface SessionServiceOptions {
+  maxTtlSeconds: number;
+  globalMaxSpendWei: bigint;
+}
+
+export class SessionService {
+  private readonly store: SessionStore;
+  private readonly maxTtlSeconds: number;
+  private readonly globalMaxSpendWei: bigint;
+
+  constructor(options: SessionServiceOptions) {
+    this.store = new SessionStore();
+    this.maxTtlSeconds = options.maxTtlSeconds;
+    this.globalMaxSpendWei = options.globalMaxSpendWei;
+  }
+
+  create(params: CreateSessionParams): SessionKey {
+    const ttl = Math.min(params.ttlSeconds, this.maxTtlSeconds);
+    const maxSpend =
+      params.maxSpendWei > this.globalMaxSpendWei
+        ? this.globalMaxSpendWei
+        : params.maxSpendWei;
+
+    const session: SessionKey = {
+      id: randomUUID(),
+      ownerAddress: params.ownerAddress,
+      agentId: params.agentId,
+      permissions: {
+        allowedContracts: params.allowedContracts ?? [],
+        maxSpendWei: maxSpend,
+        allowedFunctionSelectors: params.allowedFunctionSelectors ?? [],
+      },
+      spentWei: 0n,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + ttl * 1000,
+      transactionCount: 0,
+    };
+
+    this.store.set(session);
+    return session;
+  }
+
+  validate(
+    sessionId: SessionId,
+    context: {
+      targetContract?: `0x${string}`;
+      valueWei?: bigint;
+      functionSelector?: `0x${string}`;
+    }
+  ): SessionValidationResult {
+    const session = this.store.get(sessionId);
+    if (!session) {
+      return { valid: false, reason: 'Session not found' };
+    }
+
+    if (session.revokedAt !== undefined) {
+      return { valid: false, reason: 'Session revoked' };
+    }
+
+    if (Date.now() >= session.expiresAt) {
+      return { valid: false, reason: 'Session expired' };
+    }
+
+    if (
+      context.targetContract !== undefined &&
+      session.permissions.allowedContracts.length > 0
+    ) {
+      const allowed = session.permissions.allowedContracts.map((a) =>
+        a.toLowerCase()
+      );
+      if (!allowed.includes(context.targetContract.toLowerCase())) {
+        return {
+          valid: false,
+          reason: `Contract ${context.targetContract} not in session whitelist`,
+        };
+      }
+    }
+
+    if (
+      context.functionSelector !== undefined &&
+      session.permissions.allowedFunctionSelectors.length > 0
+    ) {
+      if (
+        !session.permissions.allowedFunctionSelectors.includes(
+          context.functionSelector
+        )
+      ) {
+        return {
+          valid: false,
+          reason: `Function selector ${context.functionSelector} not permitted`,
+        };
+      }
+    }
+
+    if (context.valueWei !== undefined) {
+      const projected = session.spentWei + context.valueWei;
+      if (projected > session.permissions.maxSpendWei) {
+        return {
+          valid: false,
+          reason: `Spend limit exceeded: ${projected.toString()} > ${session.permissions.maxSpendWei.toString()}`,
+        };
+      }
+    }
+
+    return { valid: true, session };
+  }
+
+  recordSpend(sessionId: SessionId, amountWei: bigint): void {
+    const session = this.store.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    this.store.update(sessionId, {
+      spentWei: session.spentWei + amountWei,
+      transactionCount: session.transactionCount + 1,
+    });
+  }
+
+  revoke(sessionId: SessionId): boolean {
+    const session = this.store.get(sessionId);
+    if (!session) return false;
+    this.store.update(sessionId, { revokedAt: Date.now() });
+    return true;
+  }
+
+  get(sessionId: SessionId): SessionKey | undefined {
+    return this.store.get(sessionId);
+  }
+
+  listByOwner(ownerAddress: string): SessionKey[] {
+    return this.store.listByOwner(ownerAddress);
+  }
+
+  listByAgent(agentId: string): SessionKey[] {
+    return this.store.listByAgent(agentId);
+  }
+
+  stats(): { activeSessions: number } {
+    return { activeSessions: this.store.size() };
+  }
+
+  destroy(): void {
+    this.store.clear();
+  }
+}
