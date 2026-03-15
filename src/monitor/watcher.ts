@@ -189,7 +189,9 @@ export class BlockchainWatcher extends EventEmitter<WatcherEventMap> {
     try {
       const data = JSON.parse(raw.toString()) as Record<string, unknown>;
       this.handleWsJsonRpc(data);
-    } catch {}
+    } catch (err) {
+      process.stderr.write(`[monitor] WebSocket message parse error: ${String(err)}\n`);
+    }
   }
 
   private handleWsJsonRpc(data: Record<string, unknown>): void {
@@ -255,6 +257,7 @@ export class BlockchainWatcher extends EventEmitter<WatcherEventMap> {
 
     this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => this.connectWs(), delay);
+    this.reconnectTimer.unref();
   }
 
   private dispatch(eventType: MonitorEventType, ctx: MonitorContext): void {
@@ -264,7 +267,9 @@ export class BlockchainWatcher extends EventEmitter<WatcherEventMap> {
       if (sub.eventTypes.includes(eventType)) {
         try {
           sub.callback(ctx);
-        } catch {}
+        } catch (err) {
+          process.stderr.write(`[monitor] subscription callback error: ${String(err)}\n`);
+        }
       }
     }
   }

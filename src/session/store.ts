@@ -34,7 +34,23 @@ export class SessionStore {
     const entry = this.sessions.get(id);
     if (!entry) return undefined;
     const updated: SessionKey = { ...entry.session, ...patch };
-    this.sessions.set(id, { ...entry, session: updated });
+
+    let { timeoutHandle } = entry;
+    if (patch.expiresAt !== undefined) {
+      clearTimeout(timeoutHandle);
+      const ttlMs = patch.expiresAt - Date.now();
+      if (ttlMs <= 0) {
+        this.sessions.delete(id);
+        return updated;
+      }
+      const handle = setTimeout(() => {
+        this.sessions.delete(id);
+      }, ttlMs);
+      handle.unref();
+      timeoutHandle = handle;
+    }
+
+    this.sessions.set(id, { session: updated, timeoutHandle });
     return updated;
   }
 

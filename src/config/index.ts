@@ -76,5 +76,5 @@ export const config = buildConfig();
 
 export const publicClient = createPublicClient({
   chain: config.chain,
-  transport: http(config.rpcUrl),
+  transport: http(config.rpcUrl, { timeout: 30_000, retryCount: 2 }),
 });

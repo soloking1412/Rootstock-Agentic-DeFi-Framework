@@ -16,3 +16,8 @@ export {
   getWalletBalancesDefinition,
   getWalletBalancesHandler,
 } from './get-wallet-balances.js';
+export {
+  createSessionDefinition,
+  createCreateSessionHandler,
+} from './create-session.js';
+export type { CreateSessionDeps } from './create-session.js';

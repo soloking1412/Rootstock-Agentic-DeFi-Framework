@@ -16,6 +16,8 @@ import {
   getPositionHealthHandler,
   getWalletBalancesDefinition,
   getWalletBalancesHandler,
+  createSessionDefinition,
+  createCreateSessionHandler,
 } from './tools/index.js';
 import type { SessionService } from '../session/service.js';
 import type { PolicyEngine } from '../policy/engine.js';
@@ -26,6 +28,7 @@ export interface McpServerDeps {
 }
 
 const TOOL_DEFINITIONS: Tool[] = [
+  createSessionDefinition,
   getProtocolDataDefinition,
   simulateSwapDefinition,
   executeIntentDefinition,
@@ -51,6 +54,10 @@ export function createMcpServer(deps: McpServerDeps): Server {
     policyEngine: deps.policyEngine,
   });
 
+  const createSessionHandler = createCreateSessionHandler({
+    sessionService: deps.sessionService,
+  });
+
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOL_DEFINITIONS,
   }));
@@ -59,6 +66,8 @@ export function createMcpServer(deps: McpServerDeps): Server {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      case 'create_session':
+        return createSessionHandler(args);
       case 'get_protocol_data':
         return getProtocolDataHandler(args);
       case 'simulate_swap':

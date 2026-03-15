@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { isAddress } from 'viem';
-import { SimulationEngine } from '../../simulation/engine.js';
-import { publicClient } from '../../config/index.js';
+import { simulationEngine } from '../../protocols/clients.js';
 
 const InputSchema = z.object({
   tokenIn: z.string().refine(isAddress, { message: 'Invalid tokenIn address' }),
@@ -62,10 +61,9 @@ export async function simulateSwapHandler(
   }
 
   const { tokenIn, tokenOut, amountIn, slippageBps, from } = parsed.data;
-  const engine = new SimulationEngine(publicClient);
 
   try {
-    const result = await engine.simulateSwap({
+    const result = await simulationEngine.simulateSwap({
       tokenIn: tokenIn as `0x${string}`,
       tokenOut: tokenOut as `0x${string}`,
       amountIn: BigInt(amountIn),

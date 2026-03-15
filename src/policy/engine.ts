@@ -26,13 +26,6 @@ export class PolicyEngine {
     return this.evaluate(tx).decision === 'allow';
   }
 
-  addToWhitelist(address: string): void {
-    const lower = address.toLowerCase();
-    if (!this.whitelist.includes(lower)) {
-      this.whitelist.push(lower);
-    }
-  }
-
   getWhitelist(): readonly string[] {
     return this.whitelist;
   }

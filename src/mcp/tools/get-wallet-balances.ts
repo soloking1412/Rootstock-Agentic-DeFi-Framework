@@ -27,6 +27,9 @@ const ERC20_ABI = [
   },
 ] as const;
 
+// symbol and decimals are immutable — cache them to avoid repeated RPC calls.
+const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
+
 const InputSchema = z.object({
   address: z.string().refine(isAddress, { message: 'Invalid wallet address' }),
   tokenAddresses: z
@@ -40,7 +43,7 @@ const InputSchema = z.object({
 export const getWalletBalancesDefinition: Tool = {
   name: 'get_wallet_balances',
   description:
-    'Get native RBTC balance and ERC-20 token balances for a wallet address on Rootstock. Accepts up to 20 token contract addresses to check in a single call.',
+    'Get native RBTC balance and ERC-20 token balances for a wallet address on Rootstock. Accepts up to 20 token contract addresses per call.',
   inputSchema: {
     type: 'object',
     required: ['address'],
@@ -80,30 +83,39 @@ export async function getWalletBalancesHandler(
     const tokenResults = await Promise.allSettled(
       tokenAddresses.map(async (tokenAddress) => {
         const addr = tokenAddress as `0x${string}`;
-        const [balance, symbol, decimals] = await Promise.all([
-          publicClient.readContract({
-            address: addr,
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [account],
-          }),
-          publicClient.readContract({
-            address: addr,
-            abi: ERC20_ABI,
-            functionName: 'symbol',
-          }),
-          publicClient.readContract({
-            address: addr,
-            abi: ERC20_ABI,
-            functionName: 'decimals',
-          }),
-        ]);
+        const cacheKey = addr.toLowerCase();
+
+        let meta = tokenMetadataCache.get(cacheKey);
+        if (meta === undefined) {
+          const [symbol, decimals] = await Promise.all([
+            publicClient.readContract({
+              address: addr,
+              abi: ERC20_ABI,
+              functionName: 'symbol',
+            }),
+            publicClient.readContract({
+              address: addr,
+              abi: ERC20_ABI,
+              functionName: 'decimals',
+            }),
+          ]);
+          meta = { symbol, decimals };
+          tokenMetadataCache.set(cacheKey, meta);
+        }
+
+        const balance = await publicClient.readContract({
+          address: addr,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [account],
+        });
+
         return {
           token: addr,
-          symbol,
-          decimals,
+          symbol: meta.symbol,
+          decimals: meta.decimals,
           rawBalance: balance.toString(),
-          formattedBalance: formatUnits(balance, decimals),
+          formattedBalance: formatUnits(balance, meta.decimals),
         };
       })
     );

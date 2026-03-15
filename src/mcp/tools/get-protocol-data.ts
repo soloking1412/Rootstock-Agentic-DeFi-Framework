@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { MoCClient } from '../../protocols/moc/client.js';
-import { TropykusClient } from '../../protocols/tropykus/client.js';
-import { publicClient, config } from '../../config/index.js';
+import { mocClient, tropykusClient } from '../../protocols/clients.js';
 
 const InputSchema = z.object({
   protocol: z.enum(['moc', 'tropykus', 'all']).default('all'),
@@ -38,15 +36,18 @@ export async function getProtocolDataHandler(
   const results: Record<string, unknown> = {};
 
   try {
-    if (protocol === 'moc' || protocol === 'all') {
-      const moc = new MoCClient(publicClient, config.network);
-      results['moc'] = await moc.getProtocolData();
-    }
-
-    if (protocol === 'tropykus' || protocol === 'all') {
-      const tropykus = new TropykusClient(publicClient);
+    if (protocol === 'all') {
+      const [mocData, markets] = await Promise.all([
+        mocClient.getProtocolData(),
+        tropykusClient.getAllMarkets(),
+      ]);
+      results['moc'] = mocData;
+      results['tropykus'] = { markets, fetchedAt: Date.now() };
+    } else if (protocol === 'moc') {
+      results['moc'] = await mocClient.getProtocolData();
+    } else {
       results['tropykus'] = {
-        markets: await tropykus.getAllMarkets(),
+        markets: await tropykusClient.getAllMarkets(),
         fetchedAt: Date.now(),
       };
     }

@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { isAddress } from 'viem';
-import { TropykusClient } from '../../protocols/tropykus/client.js';
-import { publicClient } from '../../config/index.js';
+import { tropykusClient } from '../../protocols/clients.js';
 
 const InputSchema = z.object({
   account: z.string().refine(isAddress, { message: 'Invalid Ethereum address' }),
@@ -36,10 +35,8 @@ export async function getPositionHealthHandler(
     };
   }
 
-  const tropykus = new TropykusClient(publicClient);
-
   try {
-    const health = await tropykus.getPositionHealth(
+    const health = await tropykusClient.getPositionHealth(
       parsed.data.account as `0x${string}`
     );
     return {

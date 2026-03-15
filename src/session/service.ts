@@ -10,20 +10,27 @@ import { SessionStore } from './store.js';
 export interface SessionServiceOptions {
   maxTtlSeconds: number;
   globalMaxSpendWei: bigint;
+  maxSessions?: number;
 }
 
 export class SessionService {
   private readonly store: SessionStore;
   private readonly maxTtlSeconds: number;
   private readonly globalMaxSpendWei: bigint;
+  private readonly maxSessions: number;
 
   constructor(options: SessionServiceOptions) {
     this.store = new SessionStore();
     this.maxTtlSeconds = options.maxTtlSeconds;
     this.globalMaxSpendWei = options.globalMaxSpendWei;
+    this.maxSessions = options.maxSessions ?? 1000;
   }
 
   create(params: CreateSessionParams): SessionKey {
+    if (this.store.size() >= this.maxSessions) {
+      throw new Error(`Session limit reached (max: ${this.maxSessions})`);
+    }
+
     const ttl = Math.min(params.ttlSeconds, this.maxTtlSeconds);
     const maxSpend =
       params.maxSpendWei > this.globalMaxSpendWei
@@ -112,6 +119,25 @@ export class SessionService {
     }
 
     return { valid: true, session };
+  }
+
+  reserveSpend(sessionId: SessionId, amountWei: bigint): void {
+    const session = this.store.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    this.store.update(sessionId, {
+      spentWei: session.spentWei + amountWei,
+      transactionCount: session.transactionCount + 1,
+    });
+  }
+
+  rollbackSpend(sessionId: SessionId, amountWei: bigint): void {
+    const session = this.store.get(sessionId);
+    if (!session) return;
+    const restored = session.spentWei > amountWei ? session.spentWei - amountWei : 0n;
+    this.store.update(sessionId, {
+      spentWei: restored,
+      transactionCount: session.transactionCount > 0 ? session.transactionCount - 1 : 0,
+    });
   }
 
   recordSpend(sessionId: SessionId, amountWei: bigint): void {

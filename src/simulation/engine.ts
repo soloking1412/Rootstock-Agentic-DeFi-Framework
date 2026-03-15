@@ -40,6 +40,7 @@ export interface SwapSimulationResult {
   estimatedAmountOut: string;
   priceImpactBps: string;
   gasEstimate: string;
+  note: string;
   revertReason?: string;
 }
 
@@ -153,6 +154,8 @@ export class SimulationEngine {
           }),
         ]);
 
+      const NOTE = 'Estimated output only — no on-chain DEX quote. Integrate a router for production use.';
+
       if (tokenInBalance < params.amountIn) {
         return {
           success: false,
@@ -162,20 +165,16 @@ export class SimulationEngine {
           estimatedAmountOut: '0',
           priceImpactBps: '0',
           gasEstimate: '0',
+          note: NOTE,
           revertReason: `Insufficient balance: have ${formatUnits(tokenInBalance, tokenInDecimals)}, need ${formatUnits(params.amountIn, tokenInDecimals)}`,
         };
       }
 
-      // Slippage-adjusted output estimate (production: replace with on-chain DEX quote)
       const slippageFactor =
         (10000n - BigInt(params.slippageBps)) * params.amountIn;
       const estimatedOut = slippageFactor / 10000n;
 
-      const gasEstimate = await this.client.estimateGas({
-        account: params.from,
-        to: params.tokenIn,
-        data: '0x',
-      });
+      const gasEstimate = 21_000n;
 
       return {
         success: true,
@@ -185,6 +184,7 @@ export class SimulationEngine {
         estimatedAmountOut: estimatedOut.toString(),
         priceImpactBps: params.slippageBps.toString(),
         gasEstimate: gasEstimate.toString(),
+        note: NOTE,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -196,6 +196,7 @@ export class SimulationEngine {
         estimatedAmountOut: '0',
         priceImpactBps: '0',
         gasEstimate: '0',
+        note: 'Estimated output only — no on-chain DEX quote.',
         revertReason: message,
       };
     }

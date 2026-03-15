@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { isAddress, isHex } from 'viem';
+import { isAddress, isHex, parseTransaction, recoverTransactionAddress, type TransactionSerialized } from 'viem';
 import { publicClient } from '../../config/index.js';
 import type { SessionService } from '../../session/service.js';
 import type { PolicyEngine } from '../../policy/engine.js';
@@ -10,24 +10,21 @@ const InputSchema = z.object({
   signedTransaction: z
     .string()
     .refine(isHex, { message: 'Must be hex-encoded (0x-prefixed)' }),
-  targetContract: z
+  assertTargetContract: z
     .string()
-    .refine(isAddress, { message: 'Invalid contract address' }),
-  valueWei: z.string().regex(/^\d+$/).default('0'),
-  functionSelector: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{8}$/)
+    .refine(isAddress, { message: 'Invalid contract address' })
     .optional(),
+  assertValueWei: z.string().regex(/^\d+$/).optional(),
   dryRun: z.boolean().default(false),
 });
 
 export const executeIntentDefinition: Tool = {
   name: 'execute_intent',
   description:
-    'Broadcast a signed transaction through session key validation and the policy engine. Pre-signed by the session owner. All policy rules run before any broadcast.',
+    'Broadcast a signed transaction through session key validation and the policy engine. The transaction is decoded to extract the real target address and value — these cannot be overridden by the caller. Set dryRun:true to validate without broadcasting.',
   inputSchema: {
     type: 'object',
-    required: ['sessionId', 'signedTransaction', 'targetContract'],
+    required: ['sessionId', 'signedTransaction'],
     properties: {
       sessionId: {
         type: 'string',
@@ -37,17 +34,15 @@ export const executeIntentDefinition: Tool = {
         type: 'string',
         description: 'RLP-encoded signed transaction as a 0x-prefixed hex string',
       },
-      targetContract: {
+      assertTargetContract: {
         type: 'string',
-        description: 'Contract address being called — used for policy whitelist check',
+        description:
+          'Optional: assert the decoded transaction target matches this address. Request is rejected if they differ.',
       },
-      valueWei: {
+      assertValueWei: {
         type: 'string',
-        description: 'RBTC value attached in wei. Default "0".',
-      },
-      functionSelector: {
-        type: 'string',
-        description: '4-byte function selector (0x-prefixed) for session permission checks',
+        description:
+          'Optional: assert the decoded transaction value (in wei) matches this string. Request is rejected if they differ.',
       },
       dryRun: {
         type: 'boolean',
@@ -62,57 +57,95 @@ export interface ExecuteIntentDeps {
   policyEngine: PolicyEngine;
 }
 
+function deny(text: string): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text', text }] };
+}
+
 export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
   return async function executeIntentHandler(
     rawArgs: unknown
   ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
     const parsed = InputSchema.safeParse(rawArgs);
     if (!parsed.success) {
-      return {
-        content: [{ type: 'text', text: `Invalid input: ${parsed.error.message}` }],
-      };
+      return deny(`Invalid input: ${parsed.error.message}`);
     }
 
-    const { sessionId, signedTransaction, targetContract, valueWei, functionSelector, dryRun } =
+    const { sessionId, signedTransaction, assertTargetContract, assertValueWei, dryRun } =
       parsed.data;
 
-    const valueWeiNum = BigInt(valueWei);
+    let decoded: ReturnType<typeof parseTransaction>;
+    try {
+      decoded = parseTransaction(signedTransaction as `0x${string}`);
+    } catch {
+      return deny('Invalid signedTransaction: failed to decode RLP');
+    }
+
+    if (!decoded.to) {
+      return deny('Contract deployment transactions are not permitted');
+    }
+
+    const decodedTo = decoded.to;
+    const decodedValue = decoded.value ?? 0n;
+    // Pass actual tx calldata to policy engine — not the RLP-encoded envelope.
+    const decodedCalldata: `0x${string}` =
+      (decoded.data as `0x${string}` | undefined) ?? '0x';
+
+    if (assertTargetContract !== undefined) {
+      if (assertTargetContract.toLowerCase() !== decodedTo.toLowerCase()) {
+        return deny(
+          `Assertion failed: declared target ${assertTargetContract} does not match decoded tx target ${decodedTo}`
+        );
+      }
+    }
+    if (assertValueWei !== undefined) {
+      if (BigInt(assertValueWei) !== decodedValue) {
+        return deny(
+          `Assertion failed: declared valueWei ${assertValueWei} does not match decoded tx value ${decodedValue.toString()}`
+        );
+      }
+    }
+
+    let signer: `0x${string}`;
+    try {
+      signer = await recoverTransactionAddress({
+        serializedTransaction: signedTransaction as unknown as TransactionSerialized,
+      });
+    } catch {
+      return deny('Could not recover signer from signed transaction');
+    }
 
     const sessionResult = deps.sessionService.validate(sessionId, {
-      targetContract: targetContract as `0x${string}`,
-      valueWei: valueWeiNum,
-      ...(functionSelector !== undefined
-        ? { functionSelector: functionSelector as `0x${string}` }
+      targetContract: decodedTo,
+      valueWei: decodedValue,
+      ...(decodedCalldata.length >= 10
+        ? { functionSelector: decodedCalldata.slice(0, 10) as `0x${string}` }
         : {}),
     });
 
     if (!sessionResult.valid) {
-      return {
-        content: [{ type: 'text', text: `Session validation failed: ${sessionResult.reason}` }],
-      };
+      return deny(`Session validation failed: ${sessionResult.reason}`);
     }
 
     const session = sessionResult.session!;
 
+    if (signer.toLowerCase() !== session.ownerAddress.toLowerCase()) {
+      return deny(
+        `Signer mismatch: transaction signed by ${signer} but session owner is ${session.ownerAddress}`
+      );
+    }
+
     const policyResult = deps.policyEngine.evaluate({
       sessionId,
       from: session.ownerAddress,
-      to: targetContract as `0x${string}`,
-      calldata: signedTransaction as `0x${string}`,
-      valueWei: valueWeiNum,
+      to: decodedTo,
+      calldata: decodedCalldata,
+      valueWei: decodedValue,
       sessionMaxSpendWei: session.permissions.maxSpendWei,
       sessionSpentWei: session.spentWei,
     });
 
     if (policyResult.decision === 'deny') {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Blocked by policy rule "${policyResult.rule}": ${policyResult.reason}`,
-          },
-        ],
-      };
+      return deny(`Blocked by policy rule "${policyResult.rule}": ${policyResult.reason}`);
     }
 
     if (dryRun) {
@@ -124,12 +157,14 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
               {
                 status: 'dry_run_passed',
                 sessionId,
+                decodedTo,
+                decodedValue: decodedValue.toString(),
                 policyDecision: policyResult.decision,
                 policyRule: policyResult.rule,
                 remainingSpendWei: (
                   session.permissions.maxSpendWei -
                   session.spentWei -
-                  valueWeiNum
+                  decodedValue
                 ).toString(),
               },
               null,
@@ -140,12 +175,12 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
       };
     }
 
+    deps.sessionService.reserveSpend(sessionId, decodedValue);
+
     try {
       const txHash = await publicClient.sendRawTransaction({
         serializedTransaction: signedTransaction as `0x${string}`,
       });
-
-      deps.sessionService.recordSpend(sessionId, valueWeiNum);
 
       return {
         content: [
@@ -159,7 +194,7 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
                 remainingSpendWei: (
                   session.permissions.maxSpendWei -
                   session.spentWei -
-                  valueWeiNum
+                  decodedValue
                 ).toString(),
               },
               null,
@@ -169,10 +204,9 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
         ],
       };
     } catch (err) {
+      deps.sessionService.rollbackSpend(sessionId, decodedValue);
       const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: [{ type: 'text', text: `Broadcast failed: ${message}` }],
-      };
+      return deny(`Broadcast failed: ${message}`);
     }
   };
 }
