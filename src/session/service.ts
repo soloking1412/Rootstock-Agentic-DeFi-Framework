@@ -77,10 +77,10 @@ export class SessionService {
       return { valid: false, reason: 'Session expired' };
     }
 
-    if (
-      context.targetContract !== undefined &&
-      session.permissions.allowedContracts.length > 0
-    ) {
+    if (context.targetContract !== undefined) {
+      if (session.permissions.allowedContracts.length === 0) {
+        return { valid: false, reason: 'Session has no allowed contracts' };
+      }
       const allowed = session.permissions.allowedContracts.map((a) =>
         a.toLowerCase()
       );
@@ -137,15 +137,6 @@ export class SessionService {
     this.store.update(sessionId, {
       spentWei: restored,
       transactionCount: session.transactionCount > 0 ? session.transactionCount - 1 : 0,
-    });
-  }
-
-  recordSpend(sessionId: SessionId, amountWei: bigint): void {
-    const session = this.store.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
-    this.store.update(sessionId, {
-      spentWei: session.spentWei + amountWei,
-      transactionCount: session.transactionCount + 1,
     });
   }
 

@@ -28,7 +28,10 @@ const EnvSchema = z.object({
         .filter(Boolean)
     ),
   AUDIT_LOG_DESTINATION: z.enum(['console', 'file']).default('console'),
-  AUDIT_LOG_FILE_PATH: z.string().default('./audit.log'),
+  AUDIT_LOG_FILE_PATH: z
+    .string()
+    .default('./audit.log')
+    .refine((p) => !p.includes('..'), { message: 'Path traversal not allowed in AUDIT_LOG_FILE_PATH' }),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

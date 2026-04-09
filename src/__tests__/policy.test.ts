@@ -31,24 +31,6 @@ describe('block_zero_address', () => {
   });
 });
 
-describe('block_selfdestruct', () => {
-  it('denies calldata starting with 0xff', () => {
-    const result = evaluateRules(ctx({ calldata: '0xff1234' }));
-    expect(result.decision).toBe('deny');
-    expect(result.rule).toBe('block_selfdestruct');
-  });
-
-  it('allows calldata not starting with 0xff', () => {
-    const result = evaluateRules(ctx({ calldata: '0xa9059cbb' }));
-    expect(result.decision).toBe('allow');
-  });
-
-  it('allows empty calldata', () => {
-    const result = evaluateRules(ctx({ calldata: '0x' }));
-    expect(result.decision).toBe('allow');
-  });
-});
-
 describe('excessive_value', () => {
   it('denies value over 10 RBTC', () => {
     const result = evaluateRules(ctx({ valueWei: 11n * RBTC }));

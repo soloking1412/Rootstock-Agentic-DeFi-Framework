@@ -35,7 +35,7 @@ export function computePriceChangePercent(
   }
   const diff = current > previous ? current - previous : previous - current;
   const direction: 'up' | 'down' = current >= previous ? 'up' : 'down';
-  const pct = (Number(diff) / Number(previous)) * 100;
+  const pct = Number((diff * 1_000_000n) / previous) / 10_000;
   return {
     changePercent: pct.toFixed(4),
     direction,

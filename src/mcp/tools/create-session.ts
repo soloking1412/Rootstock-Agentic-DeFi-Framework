@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { isAddress } from 'viem';
+import { isAddress, isHex, hashMessage, recoverAddress } from 'viem';
 import type { SessionService } from '../../session/service.js';
 
 const InputSchema = z.object({
@@ -12,19 +12,22 @@ const InputSchema = z.object({
   maxSpendWei: z.string().regex(/^\d+$/, 'Must be a non-negative integer string (wei)'),
   allowedContracts: z
     .array(z.string().refine(isAddress, { message: 'Invalid contract address' }))
-    .optional(),
+    .min(1, 'At least one allowed contract is required'),
   allowedFunctionSelectors: z
     .array(z.string().regex(/^0x[0-9a-fA-F]{8}$/, 'Must be a 4-byte hex selector'))
     .optional(),
+  ownerSignature: z
+    .string()
+    .refine(isHex, { message: 'ownerSignature must be a 0x-prefixed hex string' }),
 });
 
 export const createSessionDefinition: Tool = {
   name: 'create_session',
   description:
-    'Create a session key that authorizes this agent to execute transactions on behalf of ownerAddress within the declared spend limits. Sessions are scoped to this MCP server instance and expire after ttlSeconds. The actual TTL and spend ceiling are capped by server-side limits.',
+    'Create a session key that authorizes this agent to execute transactions on behalf of ownerAddress within the declared spend limits. Sessions are scoped to this MCP server instance and expire after ttlSeconds. The actual TTL and spend ceiling are capped by server-side limits. ownerSignature must be an EIP-191 personal_sign of the canonical message: "create_session:<ownerAddress>:<agentId>:<ttlSeconds>:<maxSpendWei>".',
   inputSchema: {
     type: 'object',
-    required: ['ownerAddress', 'agentId', 'ttlSeconds', 'maxSpendWei'],
+    required: ['ownerAddress', 'agentId', 'ttlSeconds', 'maxSpendWei', 'allowedContracts', 'ownerSignature'],
     properties: {
       ownerAddress: {
         type: 'string',
@@ -45,13 +48,17 @@ export const createSessionDefinition: Tool = {
       allowedContracts: {
         type: 'array',
         items: { type: 'string' },
-        description:
-          'Optional contract address allowlist. If empty, the global policy whitelist applies.',
+        description: 'Contract address allowlist (at least one required)',
       },
       allowedFunctionSelectors: {
         type: 'array',
         items: { type: 'string' },
         description: 'Optional 4-byte function selector allowlist (0x-prefixed)',
+      },
+      ownerSignature: {
+        type: 'string',
+        description:
+          'EIP-191 personal_sign signature of "create_session:<ownerAddress>:<agentId>:<ttlSeconds>:<maxSpendWei>"',
       },
     },
   },
@@ -62,9 +69,9 @@ export interface CreateSessionDeps {
 }
 
 export function createCreateSessionHandler(deps: CreateSessionDeps) {
-  return function createSessionHandler(
+  return async function createSessionHandler(
     rawArgs: unknown
-  ): { content: Array<{ type: 'text'; text: string }> } {
+  ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
     const parsed = InputSchema.safeParse(rawArgs);
     if (!parsed.success) {
       return {
@@ -79,7 +86,28 @@ export function createCreateSessionHandler(deps: CreateSessionDeps) {
       maxSpendWei,
       allowedContracts,
       allowedFunctionSelectors,
+      ownerSignature,
     } = parsed.data;
+
+    const message = `create_session:${ownerAddress.toLowerCase()}:${agentId}:${ttlSeconds}:${maxSpendWei}`;
+
+    let recovered: `0x${string}`;
+    try {
+      recovered = await recoverAddress({
+        hash: hashMessage(message),
+        signature: ownerSignature as `0x${string}`,
+      });
+    } catch {
+      return {
+        content: [{ type: 'text', text: 'Signature verification failed: could not recover address' }],
+      };
+    }
+
+    if (recovered.toLowerCase() !== ownerAddress.toLowerCase()) {
+      return {
+        content: [{ type: 'text', text: `Signature mismatch: recovered ${recovered}, expected ${ownerAddress}` }],
+      };
+    }
 
     try {
       const session = deps.sessionService.create({
@@ -87,9 +115,7 @@ export function createCreateSessionHandler(deps: CreateSessionDeps) {
         agentId,
         ttlSeconds,
         maxSpendWei: BigInt(maxSpendWei),
-        ...(allowedContracts !== undefined
-          ? { allowedContracts: allowedContracts as `0x${string}`[] }
-          : {}),
+        allowedContracts: allowedContracts as `0x${string}`[],
         ...(allowedFunctionSelectors !== undefined
           ? { allowedFunctionSelectors: allowedFunctionSelectors as `0x${string}`[] }
           : {}),
@@ -115,9 +141,9 @@ export function createCreateSessionHandler(deps: CreateSessionDeps) {
         ],
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const errMessage = err instanceof Error ? err.message : String(err);
       return {
-        content: [{ type: 'text', text: `Session creation failed: ${message}` }],
+        content: [{ type: 'text', text: `Session creation failed: ${errMessage}` }],
       };
     }
   };

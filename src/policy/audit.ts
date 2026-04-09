@@ -1,4 +1,5 @@
 import { appendFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { config } from '../config/index.js';
 
 export type PolicyDecision = 'allow' | 'deny';
@@ -20,7 +21,7 @@ export function writeAuditEntry(entry: AuditEntry): void {
 
   if (config.audit.destination === 'file') {
     try {
-      appendFileSync(config.audit.filePath, line, 'utf8');
+      appendFileSync(resolve(config.audit.filePath), line, 'utf8');
     } catch {
       process.stderr.write(
         `[audit] write failed for ${config.audit.filePath}\n`

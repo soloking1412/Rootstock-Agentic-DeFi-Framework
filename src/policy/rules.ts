@@ -31,17 +31,6 @@ const blockZeroAddress: PolicyRule = (ctx) => {
   return null;
 };
 
-const blockSelfDestruct: PolicyRule = (ctx) => {
-  if (ctx.calldata.length >= 4 && ctx.calldata.slice(2, 4).toLowerCase() === 'ff') {
-    return {
-      decision: 'deny',
-      rule: 'block_selfdestruct',
-      reason: 'Calldata begins with selfdestruct opcode (0xff)',
-    };
-  }
-  return null;
-};
-
 const blockExcessiveValue: PolicyRule = (ctx) => {
   const MAX_VALUE_WEI = 10n * 10n ** 18n;
   if (ctx.valueWei > MAX_VALUE_WEI) {
@@ -81,7 +70,6 @@ const enforceContractWhitelist: PolicyRule = (ctx) => {
 
 export const POLICY_RULES: PolicyRule[] = [
   blockZeroAddress,
-  blockSelfDestruct,
   blockExcessiveValue,
   enforceSpendLimit,
   enforceContractWhitelist,

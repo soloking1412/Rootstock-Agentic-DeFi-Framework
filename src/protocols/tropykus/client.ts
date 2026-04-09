@@ -45,7 +45,7 @@ export class TropykusClient {
   }
 
   private ratePerBlockToApy(ratePerBlock: bigint): string {
-    const rate = Number(ratePerBlock) / Number(MANTISSA);
+    const rate = Number(ratePerBlock) / 1e18;
     const apy = (Math.pow(rate + 1, Number(BLOCKS_PER_YEAR)) - 1) * 100;
     return apy.toFixed(4);
   }
@@ -159,7 +159,7 @@ export class TropykusClient {
 
     let healthFactor: string;
     if (shortfall > 0n) {
-      const hf = Number(liquidity) / Number(shortfall);
+      const hf = Number((liquidity * 10000n) / shortfall) / 10000;
       healthFactor = hf.toFixed(4);
     } else if (liquidity > 0n) {
       healthFactor = 'healthy';

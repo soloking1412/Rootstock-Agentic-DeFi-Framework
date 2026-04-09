@@ -27,8 +27,15 @@ const ERC20_ABI = [
   },
 ] as const;
 
-// symbol and decimals are immutable — cache them to avoid repeated RPC calls.
+const TOKEN_CACHE_MAX = 500;
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
+
+function cacheSet(key: string, value: { symbol: string; decimals: number }): void {
+  if (tokenMetadataCache.size >= TOKEN_CACHE_MAX) {
+    tokenMetadataCache.delete(tokenMetadataCache.keys().next().value as string);
+  }
+  tokenMetadataCache.set(key, value);
+}
 
 const InputSchema = z.object({
   address: z.string().refine(isAddress, { message: 'Invalid wallet address' }),
@@ -100,7 +107,7 @@ export async function getWalletBalancesHandler(
             }),
           ]);
           meta = { symbol, decimals };
-          tokenMetadataCache.set(cacheKey, meta);
+          cacheSet(cacheKey, meta);
         }
 
         const balance = await publicClient.readContract({

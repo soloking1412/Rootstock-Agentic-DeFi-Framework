@@ -112,14 +112,3 @@ describe('SessionService.reserveSpend() / rollbackSpend()', () => {
   });
 });
 
-describe('SessionService.recordSpend()', () => {
-  it('increments spentWei and transactionCount', () => {
-    const svc = makeService();
-    const session = svc.create({ ownerAddress: OWNER, agentId: AGENT, ttlSeconds: 60, maxSpendWei: RBTC });
-    svc.recordSpend(session.id, RBTC / 4n);
-    svc.recordSpend(session.id, RBTC / 4n);
-    const after = svc.get(session.id)!;
-    expect(after.spentWei).toBe(RBTC / 2n);
-    expect(after.transactionCount).toBe(2);
-  });
-});

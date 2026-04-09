@@ -57,14 +57,14 @@ export interface ExecuteIntentDeps {
   policyEngine: PolicyEngine;
 }
 
-function deny(text: string): { content: Array<{ type: 'text'; text: string }> } {
-  return { content: [{ type: 'text', text }] };
+function deny(text: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
+  return { content: [{ type: 'text', text }], isError: true };
 }
 
 export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
   return async function executeIntentHandler(
     rawArgs: unknown
-  ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: true }> {
     const parsed = InputSchema.safeParse(rawArgs);
     if (!parsed.success) {
       return deny(`Invalid input: ${parsed.error.message}`);
@@ -86,7 +86,6 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
 
     const decodedTo = decoded.to;
     const decodedValue = decoded.value ?? 0n;
-    // Pass actual tx calldata to policy engine — not the RLP-encoded envelope.
     const decodedCalldata: `0x${string}` =
       (decoded.data as `0x${string}` | undefined) ?? '0x';
 
@@ -105,15 +104,6 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
       }
     }
 
-    let signer: `0x${string}`;
-    try {
-      signer = await recoverTransactionAddress({
-        serializedTransaction: signedTransaction as unknown as TransactionSerialized,
-      });
-    } catch {
-      return deny('Could not recover signer from signed transaction');
-    }
-
     const sessionResult = deps.sessionService.validate(sessionId, {
       targetContract: decodedTo,
       valueWei: decodedValue,
@@ -128,12 +118,6 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
 
     const session = sessionResult.session!;
 
-    if (signer.toLowerCase() !== session.ownerAddress.toLowerCase()) {
-      return deny(
-        `Signer mismatch: transaction signed by ${signer} but session owner is ${session.ownerAddress}`
-      );
-    }
-
     const policyResult = deps.policyEngine.evaluate({
       sessionId,
       from: session.ownerAddress,
@@ -146,6 +130,31 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
 
     if (policyResult.decision === 'deny') {
       return deny(`Blocked by policy rule "${policyResult.rule}": ${policyResult.reason}`);
+    }
+
+    if (!dryRun) {
+      deps.sessionService.reserveSpend(sessionId, decodedValue);
+    }
+
+    let signer: `0x${string}`;
+    try {
+      signer = await recoverTransactionAddress({
+        serializedTransaction: signedTransaction as TransactionSerialized,
+      });
+    } catch {
+      if (!dryRun) {
+        deps.sessionService.rollbackSpend(sessionId, decodedValue);
+      }
+      return deny('Could not recover signer from signed transaction');
+    }
+
+    if (signer.toLowerCase() !== session.ownerAddress.toLowerCase()) {
+      if (!dryRun) {
+        deps.sessionService.rollbackSpend(sessionId, decodedValue);
+      }
+      return deny(
+        `Signer mismatch: transaction signed by ${signer} but session owner is ${session.ownerAddress}`
+      );
     }
 
     if (dryRun) {
@@ -175,12 +184,15 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
       };
     }
 
-    deps.sessionService.reserveSpend(sessionId, decodedValue);
-
     try {
       const txHash = await publicClient.sendRawTransaction({
         serializedTransaction: signedTransaction as `0x${string}`,
       });
+
+      const fresh = deps.sessionService.get(sessionId);
+      const remainingSpendWei = fresh !== undefined
+        ? (fresh.permissions.maxSpendWei - fresh.spentWei).toString()
+        : 'unknown';
 
       return {
         content: [
@@ -191,11 +203,7 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
                 status: 'broadcast',
                 txHash,
                 sessionId,
-                remainingSpendWei: (
-                  session.permissions.maxSpendWei -
-                  session.spentWei -
-                  decodedValue
-                ).toString(),
+                remainingSpendWei,
               },
               null,
               2

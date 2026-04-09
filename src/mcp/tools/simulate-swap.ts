@@ -18,7 +18,7 @@ const InputSchema = z.object({
 export const simulateSwapDefinition: Tool = {
   name: 'simulate_swap',
   description:
-    'Simulate a token swap on Rootstock without broadcasting. Returns estimated output, price impact, and gas cost. Checks on-chain balances to verify the swap is feasible before the agent proceeds.',
+    'Estimate a token swap on Rootstock. IMPORTANT: This tool does NOT query a live DEX — estimatedAmountOut is calculated using the slippage factor only and does not reflect actual market prices or liquidity. Use only for feasibility checks (balance sufficiency, rough gas). Integrate a real router for production quote accuracy.',
   inputSchema: {
     type: 'object',
     required: ['tokenIn', 'tokenOut', 'amountIn', 'from'],
