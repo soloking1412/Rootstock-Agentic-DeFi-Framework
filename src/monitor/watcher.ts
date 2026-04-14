@@ -93,7 +93,11 @@ export class BlockchainWatcher extends EventEmitter<WatcherEventMap> {
     this.lastKnownPrice = currentPriceWei;
 
     const PRECISION = 10n ** 18n;
-    const fmt = (v: bigint): string => (Number(v) / Number(PRECISION)).toFixed(2);
+    const fmt = (v: bigint): string => {
+      const whole = v / PRECISION;
+      const frac = ((v % PRECISION) * 100n) / PRECISION;
+      return `${whole.toString()}.${frac.toString().padStart(2, '0')}`;
+    };
 
     this.dispatch(
       'price:change',

@@ -17,13 +17,21 @@ export class PolicyEngine {
   }
 
   evaluate(
-    tx: Omit<TransactionContext, 'allowedContracts'>
+    tx: Omit<TransactionContext, 'allowedContracts'>,
+    sessionContracts?: string[]
   ): PolicyRuleResult {
-    return evaluateRules({ ...tx, allowedContracts: this.whitelist });
+    const effective =
+      sessionContracts !== undefined && sessionContracts.length > 0
+        ? sessionContracts.map((a) => a.toLowerCase())
+        : this.whitelist;
+    return evaluateRules({ ...tx, allowedContracts: effective });
   }
 
-  isAllowed(tx: Omit<TransactionContext, 'allowedContracts'>): boolean {
-    return this.evaluate(tx).decision === 'allow';
+  isAllowed(
+    tx: Omit<TransactionContext, 'allowedContracts'>,
+    sessionContracts?: string[]
+  ): boolean {
+    return this.evaluate(tx, sessionContracts).decision === 'allow';
   }
 
   getWhitelist(): readonly string[] {

@@ -32,7 +32,10 @@ const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>
 
 function cacheSet(key: string, value: { symbol: string; decimals: number }): void {
   if (tokenMetadataCache.size >= TOKEN_CACHE_MAX) {
-    tokenMetadataCache.delete(tokenMetadataCache.keys().next().value as string);
+    const oldest = tokenMetadataCache.keys().next().value;
+    if (oldest !== undefined) {
+      tokenMetadataCache.delete(oldest);
+    }
   }
   tokenMetadataCache.set(key, value);
 }

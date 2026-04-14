@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolve } from 'node:path';
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
@@ -31,7 +32,9 @@ const EnvSchema = z.object({
   AUDIT_LOG_FILE_PATH: z
     .string()
     .default('./audit.log')
-    .refine((p) => !p.includes('..'), { message: 'Path traversal not allowed in AUDIT_LOG_FILE_PATH' }),
+    .refine((p) => !p.includes('\0'), { message: 'Null byte not allowed in AUDIT_LOG_FILE_PATH' })
+    .refine((p) => !p.includes('..'), { message: 'Path traversal not allowed in AUDIT_LOG_FILE_PATH' })
+    .transform((p) => resolve(p)),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

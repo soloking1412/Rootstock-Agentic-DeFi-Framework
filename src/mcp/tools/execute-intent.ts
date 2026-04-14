@@ -104,6 +104,15 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
       }
     }
 
+    let signer: `0x${string}`;
+    try {
+      signer = await recoverTransactionAddress({
+        serializedTransaction: signedTransaction as TransactionSerialized,
+      });
+    } catch {
+      return deny('Could not recover signer from signed transaction');
+    }
+
     const sessionResult = deps.sessionService.validate(sessionId, {
       targetContract: decodedTo,
       valueWei: decodedValue,
@@ -118,15 +127,24 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
 
     const session = sessionResult.session!;
 
-    const policyResult = deps.policyEngine.evaluate({
-      sessionId,
-      from: session.ownerAddress,
-      to: decodedTo,
-      calldata: decodedCalldata,
-      valueWei: decodedValue,
-      sessionMaxSpendWei: session.permissions.maxSpendWei,
-      sessionSpentWei: session.spentWei,
-    });
+    if (signer.toLowerCase() !== session.ownerAddress.toLowerCase()) {
+      return deny(
+        `Signer mismatch: transaction signed by ${signer} but session owner is ${session.ownerAddress}`
+      );
+    }
+
+    const policyResult = deps.policyEngine.evaluate(
+      {
+        sessionId,
+        from: session.ownerAddress,
+        to: decodedTo,
+        calldata: decodedCalldata,
+        valueWei: decodedValue,
+        sessionMaxSpendWei: session.permissions.maxSpendWei,
+        sessionSpentWei: session.spentWei,
+      },
+      session.permissions.allowedContracts
+    );
 
     if (policyResult.decision === 'deny') {
       return deny(`Blocked by policy rule "${policyResult.rule}": ${policyResult.reason}`);
@@ -134,27 +152,6 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
 
     if (!dryRun) {
       deps.sessionService.reserveSpend(sessionId, decodedValue);
-    }
-
-    let signer: `0x${string}`;
-    try {
-      signer = await recoverTransactionAddress({
-        serializedTransaction: signedTransaction as TransactionSerialized,
-      });
-    } catch {
-      if (!dryRun) {
-        deps.sessionService.rollbackSpend(sessionId, decodedValue);
-      }
-      return deny('Could not recover signer from signed transaction');
-    }
-
-    if (signer.toLowerCase() !== session.ownerAddress.toLowerCase()) {
-      if (!dryRun) {
-        deps.sessionService.rollbackSpend(sessionId, decodedValue);
-      }
-      return deny(
-        `Signer mismatch: transaction signed by ${signer} but session owner is ${session.ownerAddress}`
-      );
     }
 
     if (dryRun) {
@@ -190,9 +187,10 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
       });
 
       const fresh = deps.sessionService.get(sessionId);
-      const remainingSpendWei = fresh !== undefined
-        ? (fresh.permissions.maxSpendWei - fresh.spentWei).toString()
-        : 'unknown';
+      const remainingSpendWei =
+        fresh !== undefined
+          ? (fresh.permissions.maxSpendWei - fresh.spentWei).toString()
+          : 'unknown';
 
       return {
         content: [
@@ -213,8 +211,8 @@ export function createExecuteIntentHandler(deps: ExecuteIntentDeps) {
       };
     } catch (err) {
       deps.sessionService.rollbackSpend(sessionId, decodedValue);
-      const message = err instanceof Error ? err.message : String(err);
-      return deny(`Broadcast failed: ${message}`);
+      const errMessage = err instanceof Error ? err.message : String(err);
+      return deny(`Broadcast failed: ${errMessage}`);
     }
   };
 }

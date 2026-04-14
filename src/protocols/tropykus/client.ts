@@ -1,4 +1,5 @@
 import type { PublicClient } from 'viem';
+import { formatUnits } from 'viem';
 import {
   COMPTROLLER_ABI,
   CTOKEN_ABI,
@@ -45,7 +46,7 @@ export class TropykusClient {
   }
 
   private ratePerBlockToApy(ratePerBlock: bigint): string {
-    const rate = Number(ratePerBlock) / 1e18;
+    const rate = parseFloat(formatUnits(ratePerBlock, 18));
     const apy = (Math.pow(rate + 1, Number(BLOCKS_PER_YEAR)) - 1) * 100;
     return apy.toFixed(4);
   }
